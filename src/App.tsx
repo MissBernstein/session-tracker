@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
+import type { Session as AuthSession } from '@supabase/supabase-js';
 import { 
   Plus, 
   History, 
@@ -17,10 +18,14 @@ import {
   Filter,
   Mic,
   Heart,
+  Mail,
+  LogOut,
+  ShieldCheck,
   Trash2,
   RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { supabase } from './supabaseClient';
 
 // --- Types ---
 
@@ -45,36 +50,94 @@ interface Client {
   createdAt: string;
 }
 
-// --- Constants ---
+// --- Supabase helpers ---
 
-const STORAGE_KEY = 'session_tracker_data';
+function toRow(c: Partial<Client> & { id?: string; createdAt?: string }) {
+  const row: Record<string, unknown> = {};
+  if (c.id !== undefined) row.id = c.id;
+  if (c.name !== undefined) row.name = c.name;
+  if (c.category !== undefined) row.category = c.category;
+  if (c.packageType !== undefined) row.package_type = String(c.packageType);
+  if (c.customPackageCount !== undefined) row.custom_package_count = c.customPackageCount;
+  if (c.initialNotes !== undefined) row.initial_notes = c.initialNotes;
+  if (c.sessions !== undefined) row.sessions = c.sessions;
+  if (c.completedPackages !== undefined) row.completed_packages = c.completedPackages;
+  if (c.isArchived !== undefined) row.is_archived = c.isArchived;
+  if (c.createdAt !== undefined) row.created_at = c.createdAt;
+  return row;
+}
+
+function fromRow(row: Record<string, unknown>): Client {
+  const pt = row.package_type as string;
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    category: row.category as Category,
+    packageType: (pt === 'Custom' ? 'Custom' : Number(pt)) as PackageType,
+    customPackageCount: row.custom_package_count as number | undefined,
+    initialNotes: row.initial_notes as string,
+    sessions: (row.sessions ?? []) as Session[],
+    completedPackages: (row.completed_packages ?? []) as Session[][],
+    isArchived: row.is_archived as boolean,
+    createdAt: row.created_at as string,
+  };
+}
 
 // --- Components ---
 
 export default function App() {
   const [clients, setClients] = useState<Client[]>([]);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [filter, setFilter] = useState<'All' | Category>('All');
   const [showArchived, setShowArchived] = useState(false);
 
-  // Load data
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        setClients(JSON.parse(saved));
-      } catch (e) {
-        console.error('Failed to load data', e);
+    const initAuth = async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.error('Failed to load auth session:', error);
+      } else {
+        setAuthSession(data.session);
       }
-    }
+      setAuthLoading(false);
+    };
+
+    initAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthSession(session);
+      setAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  // Save data
+  // Load data from Supabase for the signed-in user
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(clients));
-  }, [clients]);
+    if (!authSession?.user) {
+      setClients([]);
+      setLoading(false);
+      return;
+    }
 
-  const addClient = (newClient: Omit<Client, 'id' | 'sessions' | 'completedPackages' | 'isArchived' | 'createdAt'>) => {
+    (async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('clients')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) console.error('Failed to load clients:', error);
+      else setClients((data ?? []).map(fromRow));
+      setLoading(false);
+    })();
+  }, [authSession?.user?.id]);
+
+  const addClient = async (newClient: Omit<Client, 'id' | 'sessions' | 'completedPackages' | 'isArchived' | 'createdAt'>) => {
     const client: Client = {
       ...newClient,
       id: crypto.randomUUID(),
@@ -83,53 +146,77 @@ export default function App() {
       isArchived: false,
       createdAt: new Date().toISOString(),
     };
+    const { error } = await supabase.from('clients').insert(toRow(client));
+    if (error) { console.error('Failed to add client:', error); return; }
     setClients(prev => [client, ...prev]);
     setIsFormOpen(false);
   };
 
-  const updateClient = (id: string, updates: Partial<Client>) => {
+  const updateClient = async (id: string, updates: Partial<Client>) => {
+    const { error } = await supabase.from('clients').update(toRow(updates)).eq('id', id);
+    if (error) { console.error('Failed to update client:', error); return; }
     setClients(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
   };
 
-  const deleteClient = (id: string) => {
-    if (confirm('Are you sure you want to permanently delete this client?')) {
-      setClients(prev => prev.filter(c => c.id !== id));
-    }
+  const deleteClient = async (id: string) => {
+    if (!confirm('Are you sure you want to permanently delete this client?')) return;
+    const { error } = await supabase.from('clients').delete().eq('id', id);
+    if (error) { console.error('Failed to delete client:', error); return; }
+    setClients(prev => prev.filter(c => c.id !== id));
   };
 
-  const addSession = (clientId: string) => {
+  const addSession = async (clientId: string) => {
+    const client = clients.find(c => c.id === clientId);
+    if (!client) return;
     const timestamp = new Date().toLocaleString();
-    setClients(prev => prev.map(c => {
-      if (c.id === clientId) {
-        const newSessions = [...c.sessions, { id: crypto.randomUUID(), timestamp }];
-        return { ...c, sessions: newSessions };
-      }
-      return c;
-    }));
+    const newSessions = [...client.sessions, { id: crypto.randomUUID(), timestamp }];
+    const { error } = await supabase.from('clients').update({ sessions: newSessions }).eq('id', clientId);
+    if (error) { console.error('Failed to add session:', error); return; }
+    setClients(prev => prev.map(c => c.id === clientId ? { ...c, sessions: newSessions } : c));
   };
 
-  const undoSession = (clientId: string) => {
-    setClients(prev => prev.map(c => {
-      if (c.id === clientId && c.sessions.length > 0) {
-        return { ...c, sessions: c.sessions.slice(0, -1) };
-      }
-      return c;
-    }));
+  const undoSession = async (clientId: string) => {
+    const client = clients.find(c => c.id === clientId);
+    if (!client || client.sessions.length === 0) return;
+    const newSessions = client.sessions.slice(0, -1);
+    const { error } = await supabase.from('clients').update({ sessions: newSessions }).eq('id', clientId);
+    if (error) { console.error('Failed to undo session:', error); return; }
+    setClients(prev => prev.map(c => c.id === clientId ? { ...c, sessions: newSessions } : c));
   };
 
-  const renewPackage = (clientId: string, packageType: PackageType, customCount?: number) => {
+  const renewPackage = async (clientId: string, packageType: PackageType, customCount?: number) => {
+    const client = clients.find(c => c.id === clientId);
+    if (!client) return;
+    const newCompletedPackages = [...(client.completedPackages || []), client.sessions];
+    const { error } = await supabase.from('clients').update({
+      completed_packages: newCompletedPackages,
+      sessions: [],
+      package_type: String(packageType),
+      custom_package_count: customCount ?? null,
+    }).eq('id', clientId);
+    if (error) { console.error('Failed to renew package:', error); return; }
     setClients(prev => prev.map(c => {
       if (c.id === clientId) {
         return {
           ...c,
-          completedPackages: [...(c.completedPackages || []), c.sessions],
+          completedPackages: newCompletedPackages,
           sessions: [],
           packageType,
-          customPackageCount: customCount
+          customPackageCount: customCount,
         };
       }
       return c;
     }));
+  };
+
+  const signOut = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error('Failed to sign out:', error);
+      return;
+    }
+    setClients([]);
+    setIsFormOpen(false);
   };
 
   const filteredClients = useMemo(() => {
@@ -143,18 +230,40 @@ export default function App() {
     return clients.filter(c => c.isArchived);
   }, [clients]);
 
+  if (authLoading || loading) return (
+    <div className="max-w-md mx-auto min-h-screen p-4 font-sans flex items-center justify-center">
+      <p className="text-[#AFAFAF] text-sm">{authLoading ? 'Checking sign-in…' : 'Loading…'}</p>
+    </div>
+  );
+
+  if (!authSession?.user) {
+    return <AuthScreen />;
+  }
+
   return (
     <div className="max-w-md mx-auto min-h-screen p-4 font-sans selection:bg-blue-500/30">
       {/* Header */}
       <header className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold tracking-tight">Session Tracker</h1>
-        <button 
-          onClick={() => setIsFormOpen(!isFormOpen)}
-          className="p-2 rounded-full bg-[#2F2F2F] hover:bg-[#3F3F3F] transition-colors text-white"
-          title="Add Client"
-        >
-          <UserPlus size={20} />
-        </button>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Session Tracker</h1>
+          <p className="text-[11px] text-[#AFAFAF] mt-1">Signed in as {authSession.user.email}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={signOut}
+            className="p-2 rounded-full bg-[#2F2F2F] hover:bg-[#3F3F3F] transition-colors text-white"
+            title="Sign Out"
+          >
+            <LogOut size={18} />
+          </button>
+          <button 
+            onClick={() => setIsFormOpen(!isFormOpen)}
+            className="p-2 rounded-full bg-[#2F2F2F] hover:bg-[#3F3F3F] transition-colors text-white"
+            title="Add Client"
+          >
+            <UserPlus size={20} />
+          </button>
+        </div>
       </header>
 
       {/* Filter Bar */}
@@ -248,6 +357,86 @@ export default function App() {
 }
 
 // --- Sub-components ---
+
+function AuthScreen() {
+  const [email, setEmail] = useState('');
+  const [status, setStatus] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim()) return;
+
+    setSubmitting(true);
+    setStatus('');
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: {
+        emailRedirectTo: window.location.origin,
+      },
+    });
+
+    if (error) {
+      setStatus(error.message);
+    } else {
+      setStatus('Check your email for a magic sign-in link.');
+    }
+
+    setSubmitting(false);
+  };
+
+  return (
+    <div className="max-w-md mx-auto min-h-screen p-4 font-sans flex items-center justify-center selection:bg-blue-500/30">
+      <div className="w-full bg-[#252525] p-6 rounded-2xl border border-[#373737] shadow-2xl">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-3 rounded-xl bg-blue-500/15 text-blue-400">
+            <ShieldCheck size={22} />
+          </div>
+          <div>
+            <h1 className="text-lg font-semibold text-[#EBEBEB]">Secure sign-in</h1>
+            <p className="text-sm text-[#AFAFAF]">Use a magic link so only you can access your session data.</p>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-[10px] uppercase tracking-wider text-[#AFAFAF] mb-1">Email</label>
+            <div className="relative">
+              <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#777]" />
+              <input
+                autoFocus
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full bg-[#191919] border border-[#373737] rounded-md pl-10 pr-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition-colors"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full bg-[#EBEBEB] text-[#191919] font-semibold py-2 rounded-md hover:bg-white transition-colors text-sm disabled:opacity-60"
+          >
+            {submitting ? 'Sending link…' : 'Email me a sign-in link'}
+          </button>
+
+          <p className="text-xs text-[#888] leading-relaxed">
+            No password needed. Open the link from your inbox on this device to sign in.
+          </p>
+
+          {status && (
+            <div className="text-sm text-[#AFAFAF] bg-[#1D1D1D] border border-[#373737] rounded-md px-3 py-2">
+              {status}
+            </div>
+          )}
+        </form>
+      </div>
+    </div>
+  );
+}
 
 function AddClientForm({ onSubmit, onCancel }: { 
   onSubmit: (client: any) => void; 
