@@ -1,0 +1,5 @@
+{
+  "name": "Session Tracker",
+  "description": "A minimalist, Notion-optimized session tracker for coaching and vocal practice with dark mode and local persistence.",
+  "requestFramePermissions": []
+}
