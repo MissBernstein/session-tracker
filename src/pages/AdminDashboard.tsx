@@ -14,6 +14,14 @@ export default function AdminDashboard() {
   const [filter, setFilter] = useState<'All' | Category>('All');
   const [showArchived, setShowArchived] = useState(false);
   const [inviteStatus, setInviteStatus] = useState<Record<string, string>>({} as Record<string, string>);
+  const [dbError, setDbError] = useState<string | null>(null);
+
+  const handleDbError = (msg: string, err: unknown) => {
+    const detail = (err as { message?: string })?.message ?? String(err);
+    console.error(msg, err);
+    setDbError(`${msg}: ${detail}`);
+    setTimeout(() => setDbError(null), 8000);
+  };
 
   useEffect(() => {
     (async () => {
@@ -22,7 +30,7 @@ export default function AdminDashboard() {
         .from('clients')
         .select('*')
         .order('created_at', { ascending: false });
-      if (error) console.error('Failed to load clients:', error);
+      if (error) handleDbError('Failed to load clients', error);
       else setClients((data ?? []).map(fromRow));
       setLoading(false);
     })();
@@ -40,21 +48,24 @@ export default function AdminDashboard() {
       createdAt: new Date().toISOString(),
     };
     const { error } = await supabase.from('clients').insert(toRow(client));
-    if (error) { console.error('Failed to add client:', error); return; }
+    if (error) { handleDbError('Failed to add client', error); return; }
     setClients((prev) => [client, ...prev]);
     setIsFormOpen(false);
   };
 
   const updateClient = async (id: string, updates: Partial<Client>) => {
+    const prev = clients.find((c) => c.id === id);
+    setClients((cs) => cs.map((c) => (c.id === id ? { ...c, ...updates } : c)));
     const { error } = await supabase.from('clients').update(toRow(updates)).eq('id', id);
-    if (error) { console.error('Failed to update client:', error); return; }
-    setClients((prev) => prev.map((c) => (c.id === id ? { ...c, ...updates } : c)));
+    if (error) {
+      handleDbError('Failed to update client', error);
+      if (prev) setClients((cs) => cs.map((c) => (c.id === id ? prev : c)));
+    }
   };
 
   const deleteClient = async (id: string) => {
-    if (!confirm('Are you sure you want to permanently delete this client?')) return;
     const { error } = await supabase.from('clients').delete().eq('id', id);
-    if (error) { console.error('Failed to delete client:', error); return; }
+    if (error) { handleDbError('Failed to delete client', error); return; }
     setClients((prev) => prev.filter((c) => c.id !== id));
   };
 
@@ -62,31 +73,36 @@ export default function AdminDashboard() {
     const client = clients.find((c) => c.id === clientId);
     if (!client) return;
     const newSessions = [...client.sessions, { id: crypto.randomUUID(), timestamp }];
-    const { error } = await supabase.from('clients').update({ sessions: newSessions }).eq('id', clientId);
-    if (error) { console.error('Failed to add session:', error); return; }
     setClients((prev) => prev.map((c) => (c.id === clientId ? { ...c, sessions: newSessions } : c)));
+    const { error } = await supabase.from('clients').update({ sessions: newSessions }).eq('id', clientId);
+    if (error) {
+      handleDbError('Failed to add session', error);
+      setClients((prev) => prev.map((c) => (c.id === clientId ? { ...c, sessions: client.sessions } : c)));
+    }
   };
 
   const undoSession = async (clientId: string) => {
     const client = clients.find((c) => c.id === clientId);
     if (!client || client.sessions.length === 0) return;
     const newSessions = client.sessions.slice(0, -1);
-    const { error } = await supabase.from('clients').update({ sessions: newSessions }).eq('id', clientId);
-    if (error) { console.error('Failed to undo session:', error); return; }
     setClients((prev) => prev.map((c) => (c.id === clientId ? { ...c, sessions: newSessions } : c)));
+    const { error } = await supabase.from('clients').update({ sessions: newSessions }).eq('id', clientId);
+    if (error) {
+      handleDbError('Failed to undo session', error);
+      setClients((prev) => prev.map((c) => (c.id === clientId ? { ...c, sessions: client.sessions } : c)));
+    }
   };
 
   const renewPackage = async (clientId: string, packageType: PackageType, customCount?: number) => {
     const client = clients.find((c) => c.id === clientId);
     if (!client) return;
     const newCompletedPackages = [...(client.completedPackages || []), client.sessions];
-    const { error } = await supabase.from('clients').update({
+    const updates = {
       completed_packages: newCompletedPackages,
       sessions: [],
       package_type: String(packageType),
       custom_package_count: customCount ?? null,
-    }).eq('id', clientId);
-    if (error) { console.error('Failed to renew package:', error); return; }
+    };
     setClients((prev) =>
       prev.map((c) =>
         c.id === clientId
@@ -94,6 +110,11 @@ export default function AdminDashboard() {
           : c
       )
     );
+    const { error } = await supabase.from('clients').update(updates).eq('id', clientId);
+    if (error) {
+      handleDbError('Failed to renew package', error);
+      setClients((prev) => prev.map((c) => (c.id === clientId ? client : c)));
+    }
   };
 
   const inviteClient = async (client: Client) => {
@@ -169,6 +190,20 @@ export default function AdminDashboard() {
           </button>
         </div>
       </header>
+
+      {/* DB error banner */}
+      <AnimatePresence>
+        {dbError && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="mb-4 px-3 py-2 rounded-lg text-xs border bg-rose-500/10 border-rose-500/20 text-rose-400"
+          >
+            ⚠️ {dbError}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Filter Bar */}
       <div className="flex gap-2 mb-6 overflow-x-auto pb-2 no-scrollbar">
