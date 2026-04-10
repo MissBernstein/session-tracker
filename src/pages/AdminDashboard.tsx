@@ -58,10 +58,9 @@ export default function AdminDashboard() {
     setClients((prev) => prev.filter((c) => c.id !== id));
   };
 
-  const addSession = async (clientId: string) => {
+  const addSession = async (clientId: string, timestamp: string) => {
     const client = clients.find((c) => c.id === clientId);
     if (!client) return;
-    const timestamp = new Date().toLocaleString();
     const newSessions = [...client.sessions, { id: crypto.randomUUID(), timestamp }];
     const { error } = await supabase.from('clients').update({ sessions: newSessions }).eq('id', clientId);
     if (error) { console.error('Failed to add session:', error); return; }
@@ -239,10 +238,11 @@ export default function AdminDashboard() {
             <ClientCard
               key={client.id}
               client={client}
-              onAddSession={() => addSession(client.id)}
+              onAddSession={(timestamp) => addSession(client.id, timestamp)}
               onUndoSession={() => undoSession(client.id)}
               onArchive={() => updateClient(client.id, { isArchived: true })}
               onDelete={() => deleteClient(client.id)}
+              onUpdate={(updates) => updateClient(client.id, updates)}
               onRenew={(type, count) => renewPackage(client.id, type, count)}
               onInvite={() => inviteClient(client)}
             />

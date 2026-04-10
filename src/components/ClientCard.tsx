@@ -13,18 +13,32 @@ import {
   Trash2,
   RotateCcw,
   Send,
+  Pencil,
+  CalendarClock,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import type { Client, PackageType } from '../types';
+import type { Client, PackageType, Category } from '../types';
+
+function nowAsDatetimeLocal(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
+function datetimeLocalToTimestamp(value: string): string {
+  if (!value) return new Date().toLocaleString();
+  return new Date(value).toLocaleString();
+}
 
 interface ClientCardProps {
   client: Client;
   readOnly?: boolean;
-  onAddSession?: () => void;
+  onAddSession?: (timestamp: string) => void;
   onUndoSession?: () => void;
   onArchive?: () => void;
   onUnarchive?: () => void;
   onDelete?: () => void;
+  onUpdate?: (updates: Partial<Client>) => void;
   onRenew?: (type: PackageType, count?: number) => void;
   onInvite?: () => void;
   isArchived?: boolean;
@@ -38,6 +52,7 @@ const ClientCard: React.FC<ClientCardProps> = ({
   onArchive,
   onUnarchive,
   onDelete,
+  onUpdate,
   onRenew,
   onInvite,
   isArchived = false,
@@ -47,6 +62,17 @@ const ClientCard: React.FC<ClientCardProps> = ({
   const [isRenewing, setIsRenewing] = useState(false);
   const [newPackageType, setNewPackageType] = useState<PackageType>(client.packageType);
   const [newCustomCount, setNewCustomCount] = useState(client.customPackageCount || 1);
+
+  // Edit mode
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(client.name);
+  const [editEmail, setEditEmail] = useState(client.email || '');
+  const [editCategory, setEditCategory] = useState<Category>(client.category);
+  const [editNotes, setEditNotes] = useState(client.initialNotes);
+
+  // Session date picker
+  const [isPickingDate, setIsPickingDate] = useState(false);
+  const [sessionDatetime, setSessionDatetime] = useState(nowAsDatetimeLocal());
 
   const totalSessions =
     client.packageType === 'Custom'
@@ -64,6 +90,34 @@ const ClientCard: React.FC<ClientCardProps> = ({
     }
   }, [currentCount, totalSessions, isArchived, readOnly]);
 
+  const openEdit = () => {
+    setEditName(client.name);
+    setEditEmail(client.email || '');
+    setEditCategory(client.category);
+    setEditNotes(client.initialNotes);
+    setIsEditing(true);
+  };
+
+  const saveEdit = () => {
+    onUpdate?.({
+      name: editName.trim() || client.name,
+      email: editEmail.trim() || undefined,
+      category: editCategory,
+      initialNotes: editNotes,
+    });
+    setIsEditing(false);
+  };
+
+  const handleLogSession = () => {
+    setSessionDatetime(nowAsDatetimeLocal());
+    setIsPickingDate(true);
+  };
+
+  const confirmSession = () => {
+    onAddSession?.(datetimeLocalToTimestamp(sessionDatetime));
+    setIsPickingDate(false);
+  };
+
   return (
     <div
       className={`bg-[#252525] rounded-xl border border-[#373737] overflow-hidden transition-all relative ${
@@ -72,73 +126,139 @@ const ClientCard: React.FC<ClientCardProps> = ({
     >
       {/* Card Header */}
       <div className="p-4 flex justify-between items-start">
-        <div>
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
             {client.category === 'Vocal Coaching' ? (
-              <Mic size={14} className="text-blue-400" />
+              <Mic size={14} className="text-blue-400 shrink-0" />
             ) : (
-              <Heart size={14} className="text-rose-400" />
+              <Heart size={14} className="text-rose-400 shrink-0" />
             )}
             <span className="text-[10px] uppercase tracking-widest text-[#AFAFAF] font-bold">
               {client.category}
             </span>
           </div>
-          <h3 className="text-base font-semibold text-[#EBEBEB] leading-tight">{client.name}</h3>
+          <h3 className="text-base font-semibold text-[#EBEBEB] leading-tight truncate">{client.name}</h3>
           {client.email && !readOnly && (
-            <p className="text-[10px] text-[#555] mt-0.5">{client.email}</p>
+            <p className="text-[10px] text-[#555] mt-0.5 truncate">{client.email}</p>
           )}
         </div>
 
-        {/* Admin actions */}
+        {/* Admin — active client actions */}
         {!readOnly && !isArchived && (
-          <div className="flex gap-1">
+          <div className="flex gap-1 ml-2 shrink-0">
             {client.email && onInvite && (
-              <button
-                onClick={onInvite}
-                className="p-1.5 rounded-md hover:bg-[#373737] text-[#AFAFAF] transition-colors"
-                title="Invite client to portal"
-              >
+              <button onClick={onInvite} className="p-1.5 rounded-md hover:bg-[#373737] text-[#AFAFAF] transition-colors" title="Invite to portal">
                 <Send size={15} />
               </button>
             )}
-            <button
-              onClick={onUndoSession}
-              disabled={currentCount === 0}
-              className="p-1.5 rounded-md hover:bg-[#373737] text-[#AFAFAF] disabled:opacity-30 transition-colors"
-              title="Undo last session"
-            >
+            <button onClick={openEdit} className="p-1.5 rounded-md hover:bg-[#373737] text-[#AFAFAF] transition-colors" title="Edit client">
+              <Pencil size={15} />
+            </button>
+            <button onClick={onUndoSession} disabled={currentCount === 0} className="p-1.5 rounded-md hover:bg-[#373737] text-[#AFAFAF] disabled:opacity-30 transition-colors" title="Undo last session">
               <Undo2 size={16} />
             </button>
-            <button
-              onClick={onArchive}
-              className="p-1.5 rounded-md hover:bg-[#373737] text-[#AFAFAF] transition-colors"
-              title="Archive Client"
-            >
+            <button onClick={onArchive} className="p-1.5 rounded-md hover:bg-[#373737] text-[#AFAFAF] transition-colors" title="Archive">
               <Archive size={16} />
             </button>
           </div>
         )}
 
-        {/* Archived admin actions */}
+        {/* Admin — archived client actions */}
         {!readOnly && isArchived && (
-          <div className="flex gap-1">
-            <button
-              onClick={onUnarchive}
-              className="p-1.5 rounded-md hover:bg-[#373737] text-[#AFAFAF] transition-colors"
-              title="Restore Client"
-            >
+          <div className="flex gap-1 ml-2 shrink-0">
+            <button onClick={onUnarchive} className="p-1.5 rounded-md hover:bg-[#373737] text-[#AFAFAF] transition-colors" title="Restore">
               <RotateCcw size={16} />
             </button>
-            <button
-              onClick={onDelete}
-              className="p-1.5 rounded-md hover:bg-rose-500/20 text-rose-400 transition-colors"
-              title="Delete Permanently"
-            >
+            <button onClick={onDelete} className="p-1.5 rounded-md hover:bg-rose-500/20 text-rose-400 transition-colors" title="Delete permanently">
               <Trash2 size={16} />
             </button>
           </div>
         )}
       </div>
+
+      {/* Inline Edit Form */}
+      <AnimatePresence>
+        {isEditing && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="mx-4 mb-4 bg-[#1D1D1D] rounded-lg border border-[#373737] p-3 space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] uppercase tracking-widest text-[#AFAFAF] font-bold">Edit Client</span>
+                <button onClick={() => setIsEditing(false)} className="text-[#AFAFAF] hover:text-[#EBEBEB]">
+                  <X size={14} />
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#AFAFAF] mb-1">Name</label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full bg-[#191919] border border-[#373737] rounded-md px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#AFAFAF] mb-1">Email</label>
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  placeholder="client@example.com"
+                  className="w-full bg-[#191919] border border-[#373737] rounded-md px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 transition-colors"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#AFAFAF] mb-1">Category</label>
+                <select
+                  value={editCategory}
+                  onChange={(e) => setEditCategory(e.target.value as Category)}
+                  className="w-full bg-[#191919] border border-[#373737] rounded-md px-3 py-1.5 text-sm focus:outline-none"
+                >
+                  <option value="Vocal Coaching">Vocal Coaching</option>
+                  <option value="Life Coaching">Life Coaching</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#AFAFAF] mb-1">Notes</label>
+                <textarea
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  className="w-full bg-[#191919] border border-[#373737] rounded-md px-3 py-1.5 text-sm focus:outline-none h-16 resize-none"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={saveEdit}
+                  className="flex-1 py-1.5 bg-[#EBEBEB] text-[#191919] rounded-md text-xs font-bold hover:bg-white transition-colors"
+                >
+                  Save
+                </button>
+                <button
+                  onClick={() => {
+                    if (confirm('Permanently delete this client and all their data?')) {
+                      onDelete?.();
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-md text-xs font-bold hover:bg-rose-500/20 transition-colors"
+                  title="Delete client permanently"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Progress Section */}
       <div className="px-4 pb-4">
@@ -200,12 +320,8 @@ const ClientCard: React.FC<ClientCardProps> = ({
                   className="bg-[#1D1D1D] p-3 rounded-lg border border-[#373737] space-y-3"
                 >
                   <div className="flex justify-between items-center">
-                    <span className="text-[10px] uppercase tracking-widest text-[#AFAFAF] font-bold">
-                      Select New Package
-                    </span>
-                    <button onClick={() => setIsRenewing(false)} className="text-[#AFAFAF] hover:text-[#EBEBEB]">
-                      <X size={14} />
-                    </button>
+                    <span className="text-[10px] uppercase tracking-widest text-[#AFAFAF] font-bold">Select New Package</span>
+                    <button onClick={() => setIsRenewing(false)} className="text-[#AFAFAF] hover:text-[#EBEBEB]"><X size={14} /></button>
                   </div>
                   <div className="flex gap-2">
                     <select
@@ -220,9 +336,7 @@ const ClientCard: React.FC<ClientCardProps> = ({
                     </select>
                     {newPackageType === 'Custom' && (
                       <input
-                        type="number"
-                        min={1}
-                        value={newCustomCount}
+                        type="number" min={1} value={newCustomCount}
                         onChange={(e) => setNewCustomCount(parseInt(e.target.value) || 1)}
                         className="w-16 bg-[#191919] border border-[#373737] rounded-md px-2 py-1.5 text-xs focus:outline-none"
                       />
@@ -241,13 +355,43 @@ const ClientCard: React.FC<ClientCardProps> = ({
               )}
             </div>
           ) : (
-            <button
-              onClick={onAddSession}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg font-bold text-sm bg-[#EBEBEB] text-[#191919] hover:bg-white transition-all active:scale-95"
-            >
-              <Plus size={18} />
-              Log Session
-            </button>
+            <>
+              {!isPickingDate ? (
+                <button
+                  onClick={handleLogSession}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg font-bold text-sm bg-[#EBEBEB] text-[#191919] hover:bg-white transition-all active:scale-95"
+                >
+                  <Plus size={18} />
+                  Log Session
+                </button>
+              ) : (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-[#1D1D1D] p-3 rounded-lg border border-[#373737] space-y-3"
+                >
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-[#AFAFAF] font-bold">
+                      <CalendarClock size={12} />
+                      Session date &amp; time
+                    </div>
+                    <button onClick={() => setIsPickingDate(false)} className="text-[#AFAFAF] hover:text-[#EBEBEB]"><X size={14} /></button>
+                  </div>
+                  <input
+                    type="datetime-local"
+                    value={sessionDatetime}
+                    onChange={(e) => setSessionDatetime(e.target.value)}
+                    className="w-full bg-[#191919] border border-[#373737] rounded-md px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500 transition-colors text-[#EBEBEB]"
+                  />
+                  <button
+                    onClick={confirmSession}
+                    className="w-full py-2 bg-[#EBEBEB] text-[#191919] rounded-md text-xs font-bold hover:bg-white transition-colors"
+                  >
+                    Confirm Session
+                  </button>
+                </motion.div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -279,64 +423,44 @@ const ClientCard: React.FC<ClientCardProps> = ({
                   <p className="text-xs text-[#AFAFAF] leading-relaxed italic">"{client.initialNotes}"</p>
                 </div>
               )}
-
               <div>
                 <span className="text-[9px] uppercase tracking-widest text-[#666] block mb-2">Logs</span>
 
-                {/* Previous Packages */}
                 {client.completedPackages?.map((pkg, pIdx) => (
                   <div key={pIdx} className="mb-4 last:mb-0">
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="h-[1px] flex-1 bg-[#333]"></div>
-                      <span className="text-[8px] uppercase tracking-widest text-[#444] font-bold">
-                        Package {pIdx + 1}
-                      </span>
-                      <div className="h-[1px] flex-1 bg-[#333]"></div>
+                      <div className="h-[1px] flex-1 bg-[#333]" />
+                      <span className="text-[8px] uppercase tracking-widest text-[#444] font-bold">Package {pIdx + 1}</span>
+                      <div className="h-[1px] flex-1 bg-[#333]" />
                     </div>
                     <div className="space-y-2 opacity-50">
-                      {pkg
-                        .slice()
-                        .reverse()
-                        .map((session, idx) => (
-                          <div
-                            key={session.id}
-                            className="flex items-center justify-between text-[11px] text-[#AFAFAF]"
-                          >
-                            <span className="font-mono text-[#666]">#{pkg.length - idx}</span>
-                            <span>{session.timestamp}</span>
-                          </div>
-                        ))}
+                      {pkg.slice().reverse().map((session, idx) => (
+                        <div key={session.id} className="flex items-center justify-between text-[11px] text-[#AFAFAF]">
+                          <span className="font-mono text-[#666]">#{pkg.length - idx}</span>
+                          <span>{session.timestamp}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
 
-                {/* Current Package */}
-                {client.sessions.length === 0 &&
-                (!client.completedPackages || client.completedPackages.length === 0) ? (
+                {client.sessions.length === 0 && (!client.completedPackages || client.completedPackages.length === 0) ? (
                   <p className="text-[10px] text-[#555] italic">No sessions logged yet.</p>
                 ) : (
                   <div className="space-y-2 mt-4">
                     {client.completedPackages && client.completedPackages.length > 0 && (
                       <div className="flex items-center gap-2 mb-2">
-                        <div className="h-[1px] flex-1 bg-[#333]"></div>
-                        <span className="text-[8px] uppercase tracking-widest text-blue-500/50 font-bold">
-                          Current Package
-                        </span>
-                        <div className="h-[1px] flex-1 bg-[#333]"></div>
+                        <div className="h-[1px] flex-1 bg-[#333]" />
+                        <span className="text-[8px] uppercase tracking-widest text-blue-500/50 font-bold">Current Package</span>
+                        <div className="h-[1px] flex-1 bg-[#333]" />
                       </div>
                     )}
-                    {client.sessions
-                      .slice()
-                      .reverse()
-                      .map((session, idx) => (
-                        <div
-                          key={session.id}
-                          className="flex items-center justify-between text-[11px] text-[#AFAFAF]"
-                        >
-                          <span className="font-mono text-[#666]">#{client.sessions.length - idx}</span>
-                          <span>{session.timestamp}</span>
-                        </div>
-                      ))}
+                    {client.sessions.slice().reverse().map((session, idx) => (
+                      <div key={session.id} className="flex items-center justify-between text-[11px] text-[#AFAFAF]">
+                        <span className="font-mono text-[#666]">#{client.sessions.length - idx}</span>
+                        <span>{session.timestamp}</span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
