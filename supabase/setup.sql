@@ -1,21 +1,24 @@
 -- ============================================================
--- Session Tracker — Supabase Setup SQL
--- Run these statements in your Supabase SQL Editor
+-- Session Tracker — Complete Supabase Setup
+-- Run this once in the SQL Editor (safe to re-run)
 -- ============================================================
 
--- 1. Add email column to clients table
+-- 1. Patch the clients table
+--    - Make user_id optional (it existed in the old setup)
+--    - Add email column for client portal access
+ALTER TABLE clients ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE clients ALTER COLUMN user_id SET DEFAULT auth.uid();
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS email text;
 
--- 2. Create profiles table (links auth users to roles)
+-- 2. Profiles table (maps auth users → roles)
 CREATE TABLE IF NOT EXISTS profiles (
   id   uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE,
   role text NOT NULL DEFAULT 'client' CHECK (role IN ('admin', 'client'))
 );
 
--- 3. Trigger: auto-create a 'client' profile for every new auth user
+-- 3. Auto-create a 'client' profile for every new sign-up
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS trigger
-LANGUAGE plpgsql
+RETURNS trigger LANGUAGE plpgsql
 SECURITY DEFINER SET search_path = public
 AS $$
 BEGIN
@@ -31,51 +34,54 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
--- 3b. Backfill profiles for any users that already existed before this setup
+-- 4. Backfill profiles for users that existed before this setup
 INSERT INTO profiles (id, role)
-SELECT id, 'client'
-FROM auth.users
+SELECT id, 'client' FROM auth.users
 WHERE id NOT IN (SELECT id FROM profiles)
 ON CONFLICT (id) DO NOTHING;
 
--- 4. Enable Row Level Security
+-- 5. Enable RLS
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clients  ENABLE ROW LEVEL SECURITY;
 
--- 5. Drop old policies if they exist (including old user_id-based ones)
-DROP POLICY IF EXISTS "Users can read their own profile" ON profiles;
-DROP POLICY IF EXISTS "Admin full access to clients"    ON clients;
-DROP POLICY IF EXISTS "Clients read own record"         ON clients;
--- Old user_id-based policies from previous setup:
-DROP POLICY IF EXISTS "select own clients" ON clients;
-DROP POLICY IF EXISTS "insert own clients" ON clients;
-DROP POLICY IF EXISTS "update own clients" ON clients;
-DROP POLICY IF EXISTS "delete own clients" ON clients;
+-- 6. Drop ALL existing policies on both tables (clean slate)
+DO $$
+DECLARE pol record;
+BEGIN
+  FOR pol IN SELECT policyname, tablename
+             FROM pg_policies
+             WHERE tablename IN ('clients', 'profiles')
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', pol.policyname, pol.tablename);
+  END LOOP;
+END $$;
 
--- 6. Profiles: each user can read their own row
-CREATE POLICY "Users can read their own profile"
+-- 7. Profiles policy: users can read their own row
+CREATE POLICY "profiles: read own"
   ON profiles FOR SELECT
   USING (auth.uid() = id);
 
--- 7. Clients: admins have full access
-CREATE POLICY "Admin full access to clients"
+-- 8. Clients policy: admin has full access
+CREATE POLICY "clients: admin all"
   ON clients FOR ALL
   USING (
     (SELECT role FROM profiles WHERE id = auth.uid()) = 'admin'
+  )
+  WITH CHECK (
+    (SELECT role FROM profiles WHERE id = auth.uid()) = 'admin'
   );
 
--- 8. Clients: clients can only read their own record (matched by email)
-CREATE POLICY "Clients read own record"
+-- 9. Clients policy: client can read only their own record
+--    Uses auth.email() — no direct access to auth.users needed
+CREATE POLICY "clients: client read own"
   ON clients FOR SELECT
-  USING (
-    email = (SELECT email FROM auth.users WHERE id = auth.uid())
-  );
+  USING (email = auth.email());
 
 -- ============================================================
--- After running the above, manually set YOUR admin profile:
--- Replace the email below with your own.
+-- 10. Set yourself as admin
+--     Replace the email with YOUR email address, then run.
 -- ============================================================
- UPDATE profiles
- SET role = 'admin'
- WHERE id = (SELECT id FROM auth.users WHERE email = 'me@leylastuber.com');
+UPDATE profiles
+SET role = 'admin'
+WHERE id = (SELECT id FROM auth.users WHERE email = 'me@leylastuber.com');
 -- ============================================================
