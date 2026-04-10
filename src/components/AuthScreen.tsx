@@ -50,7 +50,7 @@ export default function AuthScreen() {
           </div>
           <div>
             <h1 className="text-lg font-semibold text-[#EBEBEB]">
-              {view === 'login' ? 'Sign in' : 'Reset password'}
+              {view === 'login' ? 'Sign in' : 'Set your password'}
             </h1>
             <p className="text-sm text-[#AFAFAF]">Session Tracker</p>
           </div>
@@ -107,12 +107,22 @@ export default function AuthScreen() {
               onClick={() => { setView('forgot'); setError(''); }}
               className="w-full text-xs text-[#AFAFAF] hover:text-[#EBEBEB] transition-colors text-center"
             >
-              Forgot your password?
+              Set or reset your password →
             </button>
 
             {error && (
               <div className="text-sm text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-md px-3 py-2">
                 {error}
+                <p className="text-xs text-[#AFAFAF] mt-1">
+                  First time? You may not have a password yet —{' '}
+                  <button
+                    type="button"
+                    onClick={() => { setView('forgot'); setError(''); }}
+                    className="underline hover:text-[#EBEBEB]"
+                  >
+                    click here to set one
+                  </button>.
+                </p>
               </div>
             )}
           </form>
@@ -121,7 +131,7 @@ export default function AuthScreen() {
         {view === 'forgot' && (
           <form onSubmit={handleForgot} className="space-y-4">
             <p className="text-sm text-[#AFAFAF]">
-              Enter your email and we'll send you a link to reset your password.
+              First time here, or need to reset? Enter your email and we'll send you a link.
             </p>
             <div>
               <label className="block text-[10px] uppercase tracking-wider text-[#AFAFAF] mb-1">Email</label>
