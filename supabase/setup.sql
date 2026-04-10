@@ -31,6 +31,13 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
 
+-- 3b. Backfill profiles for any users that already existed before this setup
+INSERT INTO profiles (id, role)
+SELECT id, 'client'
+FROM auth.users
+WHERE id NOT IN (SELECT id FROM profiles)
+ON CONFLICT (id) DO NOTHING;
+
 -- 4. Enable Row Level Security
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE clients  ENABLE ROW LEVEL SECURITY;
